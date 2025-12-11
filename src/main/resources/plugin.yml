@@ -1,7 +1,7 @@
-name: GetAJob
-version: '1.0-SNAPSHOT'
-main: org.radi8.getAJob.GetAJob
-api-version: '1.20'
+name: PlayTimeLimit
+version: '1.1-SNAPSHOT'
+main: org.radi8.playTimeLimit.PlayTimeLimit
+api-version: '1.21'
 authors: [ Andrew (radi8) ]
 description: Per-day time limiting on Minecraft servers
 

@@ -1,9 +1,10 @@
-package org.radi8.getAJob
+package org.radi8.playTimeLimit
 
 import org.bukkit.Bukkit
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
+import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
 import org.bukkit.event.player.PlayerJoinEvent
@@ -13,16 +14,19 @@ import java.io.File
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.util.*
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
-data class KickConfig(
+data class Config(
     val kickTime: Long,
     val kickMessage: String,
     val kickBroadcast: String,
-    val kickIgnoreUsers: List<String>
+    val kickIgnoreUsers: List<String>,
+    var timezone: String
 )
 
 data class Coords(
@@ -30,9 +34,10 @@ data class Coords(
     val y: Double,
 )
 
-class GetAJob : JavaPlugin(), CommandExecutor, Listener {
+class PlayTimeLimit : JavaPlugin(), CommandExecutor, Listener {
     val playtime: MutableMap<UUID, Long> = ConcurrentHashMap()
     var coords: MutableMap<UUID, Coords> = ConcurrentHashMap()
+    private lateinit var pluginConfig: Config
 
     private var connection: Connection? = null
 
@@ -59,7 +64,7 @@ class GetAJob : JavaPlugin(), CommandExecutor, Listener {
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                             uuid VARCHAR(36) NOT NULL,
                             length INTEGER NOT NULL,
-                            time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                            time INTEGER DEFAULT (strftime('%s', 'now'))
                         )
                     """.trimIndent()
                 )
@@ -67,7 +72,7 @@ class GetAJob : JavaPlugin(), CommandExecutor, Listener {
             }
         } catch (e: SQLException) {
             logger.severe("failed to connect to or init sqlite: ${e.message}")
-            server.pluginManager.disablePlugin(this)
+            server.pluginManager.disablePlugin(this);
         }
     }
 
@@ -80,17 +85,19 @@ class GetAJob : JavaPlugin(), CommandExecutor, Listener {
         }
     }
 
-    fun getKickConfig(): KickConfig {
+    fun getPluginConfig(): Config {
         val kickTime = config.getLong("kick-time")
         val kickMessage = config.getString("kick-message") ?: ""
         val kickBroadcast = config.getString("kick-broadcast") ?: ""
         val kickIgnoreUsers = config.getStringList("kick-ignore-users")
+        val timezone = config.getString("timezone") ?: "Etc/UTC"
 
-        return KickConfig(
+        return Config(
             kickTime = kickTime,
             kickMessage = kickMessage,
             kickBroadcast = kickBroadcast,
-            kickIgnoreUsers = kickIgnoreUsers
+            kickIgnoreUsers = kickIgnoreUsers,
+            timezone = timezone,
         )
     }
 
@@ -110,14 +117,17 @@ class GetAJob : JavaPlugin(), CommandExecutor, Listener {
         config.addDefault("kick-time", 1)
         config.addDefault(
             "kick-message",
-            "Seriously? 1 minute already? Don't you have anything better to do, like... getting a job? (unless you already have one? sorry.)"
+            "You have exceeded your allotted 4 hours on this server today. Try again tomorrow."
         )
         config.addDefault(
             "kick-broadcast",
-            "{player} has spent 1 minute(s) on the server today. If they don't have a job, have them get one. Shame!"
+            "{player} has exceeded their allotted 4 hours on this server today."
         )
+        config.addDefault("timezone", "Etc/UTC")
         config.addDefault("kick-ignore-users", listOf<String>())
         config.options().copyDefaults(true)
+
+        pluginConfig = getPluginConfig()
 
         Bukkit.getScheduler().runTaskTimerAsynchronously(this, Runnable {
             server.onlinePlayers.forEach { player ->
@@ -132,7 +142,6 @@ class GetAJob : JavaPlugin(), CommandExecutor, Listener {
                     } else {
                         logger.info("player $uuid is likely afk; not adding time.")
                         return@forEach
-                        coords[uuid] = Coords(x, y)
                     }
                 } else {
                     coords[uuid] = Coords(x, y)
@@ -146,14 +155,13 @@ class GetAJob : JavaPlugin(), CommandExecutor, Listener {
 
                 val playtimeToday = (playtime[uuid]?.plus(playtimePastSessionsToday * 1200L))?.div(1200L)
                 if (playtimeToday != null) {
-                    val kickConfig = getKickConfig()
-                    if (!kickConfig.kickIgnoreUsers.contains(player.uniqueId.toString())) {
-                        if (playtimeToday >= kickConfig.kickTime) {
+                    if (!pluginConfig.kickIgnoreUsers.contains(player.uniqueId.toString())) {
+                        if (playtimeToday >= pluginConfig.kickTime) {
                             Bukkit.getScheduler().runTask(this, Runnable {
                                 if (player.isOnline) {
-                                    player.kickPlayer(kickConfig.kickMessage)
+                                    player.kickPlayer(pluginConfig.kickMessage)
                                 }
-                                Bukkit.broadcastMessage(kickConfig.kickBroadcast.replace("{player}", player.name))
+                                Bukkit.broadcastMessage(pluginConfig.kickBroadcast.replace("{player}", player.name))
                             })
                         }
                     }
@@ -166,12 +174,30 @@ class GetAJob : JavaPlugin(), CommandExecutor, Listener {
         logger.info("${description.name} version ${description.version} enabled!")
     }
 
+    fun pluralize(text: String, num: Long): String {
+        var returnText = text
+
+        if (num.toInt() == 0 || num > 1) {
+            returnText += "s"
+        }
+
+        return returnText
+    }
+
     private fun getPlaytimePastSessionsToday(uuid: UUID): Long {
+        val timezoneId = ZoneId.of(pluginConfig.timezone)
+        val startOfDay = ZonedDateTime.now(timezoneId)
+            .toLocalDate()
+            .atStartOfDay(timezoneId)
+            .toEpochSecond()
+
         try {
             connection?.prepareStatement(
-                "SELECT SUM(length) FROM playtime WHERE uuid = ? AND time >= date('now', 'start of day')"
+                "SELECT SUM(length) FROM playtime WHERE uuid = ? AND time >= ?"
             ).use { preparedStatement ->
                 preparedStatement?.setString(1, uuid.toString())
+                preparedStatement?.setLong(2, startOfDay)
+
                 val resultSet = preparedStatement?.executeQuery()
                 return if (resultSet?.next() == true) {
                     resultSet.getLong(1)
@@ -188,10 +214,18 @@ class GetAJob : JavaPlugin(), CommandExecutor, Listener {
     private fun generateTodaySummarization(): String {
         val sessions = ConcurrentHashMap<String, Long>()
 
+        val timezoneId = ZoneId.of(pluginConfig.timezone)
+        val startOfDay = ZonedDateTime.now(timezoneId)
+            .toLocalDate()
+            .atStartOfDay(timezoneId)
+            .toEpochSecond()
+
         try {
             connection?.prepareStatement(
-                "SELECT uuid, SUM(length) as total_length FROM playtime WHERE time >= date('now', 'start of day') GROUP BY uuid"
+                "SELECT uuid, SUM(length) as total_length FROM playtime WHERE time >= ? GROUP BY uuid"
             )?.use { preparedStatement ->
+                preparedStatement.setLong(1, startOfDay)
+
                 val resultSet = preparedStatement.executeQuery()
                 while (resultSet.next()) {
                     val uuid = resultSet.getString("uuid")
@@ -218,14 +252,16 @@ class GetAJob : JavaPlugin(), CommandExecutor, Listener {
         }
 
         val messageBuilder = StringBuilder()
-        sessions.entries
-            .forEach { (uuidString, totalMinutes) ->
+
+        var sortedSessions = sessions.toList().sortedByDescending { it.second }.toMap()
+
+        sortedSessions.entries
+            .forEachIndexed { i, (uuidString, totalMinutes) ->
                 val uuid = UUID.fromString(uuidString)
                 val username = Bukkit.getOfflinePlayer(uuid).name ?: "Unknown ($uuidString)"
-                val displayMinutes = totalMinutes
 
-                if (displayMinutes > 0) {
-                    messageBuilder.append("$username has played for $displayMinutes minute(s) today\n")
+                if (totalMinutes > 0) {
+                    messageBuilder.append("#${i + 1}: $username - $totalMinutes ${pluralize("minute", totalMinutes)}\n")
                 }
             }
 
@@ -236,18 +272,23 @@ class GetAJob : JavaPlugin(), CommandExecutor, Listener {
         return messageBuilder.toString().trimEnd()
     }
 
-    class GetTime(private val plugin: GetAJob) : CommandExecutor {
+    class GetTime(private val plugin: PlayTimeLimit) : CommandExecutor {
         override fun onCommand(
             sender: CommandSender,
             command: Command,
             label: String,
             args: Array<out String?>
         ): Boolean {
-            val player = sender as? org.bukkit.entity.Player
+            val player = sender as? Player
             if (player != null) {
                 val time = plugin.playtime[player.uniqueId] ?: 0L
                 val minutes = time / 1200L
-                sender.sendMessage("Your approximate playtime this session: $minutes minute(s).")
+                sender.sendMessage("Your approximate playtime this session: $minutes ${
+                    plugin.pluralize(
+                        "minute",
+                        minutes
+                    )
+                }.")
             } else {
                 sender.sendMessage("This command can only be run by a player.")
             }
@@ -256,14 +297,14 @@ class GetAJob : JavaPlugin(), CommandExecutor, Listener {
         }
     }
 
-    class Leaderboard(private val plugin: GetAJob) : CommandExecutor {
+    class Leaderboard(private val plugin: PlayTimeLimit) : CommandExecutor {
         override fun onCommand(
             sender: CommandSender,
             command: Command,
             label: String,
             args: Array<out String?>
         ): Boolean {
-            val player = sender as? org.bukkit.entity.Player
+            val player = sender as? Player
             if (player != null) {
                 val message = plugin.generateTodaySummarization()
                 sender.sendMessage(message)
@@ -293,12 +334,11 @@ class GetAJob : JavaPlugin(), CommandExecutor, Listener {
             val playtimeToday =
                 (playtime[uuid]?.plus(playtimePastSessionsToday * 1200L))?.div(1200L) ?: 0L // Provide a default value
 
-            val kickConfig = getKickConfig()
-            if (!kickConfig.kickIgnoreUsers.contains(player.uniqueId.toString())) {
-                if (playtimeToday >= kickConfig.kickTime) {
+            if (!pluginConfig.kickIgnoreUsers.contains(player.uniqueId.toString())) {
+                if (playtimeToday >= pluginConfig.kickTime) {
                     Bukkit.getScheduler().runTask(this, Runnable {
                         if (player.isOnline) {
-                            player.kickPlayer(kickConfig.kickMessage)
+                            player.kickPlayer(pluginConfig.kickMessage)
                         }
                     })
                 }

@@ -1,4 +1,5 @@
-kick-time: 1
-kick-message: "Seriously? 1 minute already? Don't you have anything better to do, like... getting a job? (unless you already have one? sorry.)"
-kick-broadcast: "{player} has spent 1 minute(s) on the server today. If they don't have a job, have them get one. Shame!"
-kick-ignore-users: ["00000000-0000-0000-0000-000000000000"] # get this from an actual user
+kick-time: 240 # 4 Hours
+kick-message: "You have exceeded your allotted 4 hours on this server today. Try again tomorrow."
+kick-broadcast: "{player} has exceeded their allotted 4 hours on this server today."
+kick-ignore-users: ["00000000-0000-0000-0000-000000000000"] # Get this from an actual user
+timezone: "Etc/UTC"
