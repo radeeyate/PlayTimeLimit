@@ -19,7 +19,9 @@ import java.time.ZonedDateTime
 import java.util.*
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.collections.set
 import kotlin.math.abs
+import kotlin.use
 
 data class Config(
     val kickTime: Long,
@@ -282,13 +284,41 @@ class PlayTimeLimit : JavaPlugin(), CommandExecutor, Listener {
             val player = sender as? Player
             if (player != null) {
                 val time = plugin.playtime[player.uniqueId] ?: 0L
-                val minutes = time / 1200L
-                sender.sendMessage("Your approximate playtime this session: $minutes ${
-                    plugin.pluralize(
-                        "minute",
-                        minutes
-                    )
-                }.")
+                val sessionTime = time / 1200L
+
+                val timezoneId = ZoneId.of(plugin.pluginConfig.timezone)
+                val startOfDay = ZonedDateTime.now(timezoneId)
+                    .toLocalDate()
+                    .atStartOfDay(timezoneId)
+                    .toEpochSecond()
+
+                var previousTimePlayed: Long = 0
+
+                try {
+                    plugin.connection?.prepareStatement(
+                        "SELECT SUM(length) as total_length FROM playtime WHERE time >= ? AND uuid = ?"
+                    )?.use { preparedStatement ->
+                        preparedStatement.setLong(1, startOfDay)
+                        preparedStatement.setString(2, player.uniqueId.toString())
+
+                        val resultSet = preparedStatement.executeQuery()
+                        while (resultSet.next()) {
+                            previousTimePlayed = resultSet.getLong("total_length")
+                        }
+                    }
+                } catch (e: Exception) {
+                }
+
+                val totalTime = previousTimePlayed + sessionTime
+
+                sender.sendMessage(
+                    "You've played for $totalTime ${plugin.pluralize("minute", totalTime)} today, and $sessionTime ${
+                        plugin.pluralize(
+                            "minute",
+                            sessionTime
+                        )
+                    } during this session."
+                )
             } else {
                 sender.sendMessage("This command can only be run by a player.")
             }

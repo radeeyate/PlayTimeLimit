@@ -7,7 +7,7 @@ description: Per-day time limiting on Minecraft servers
 
 commands:
   get-time:
-    description: get time of all players
+    description: retrieve the amount of time you've played this session/day
     usage: /<command>
 
   leaderboard:
