@@ -4,6 +4,7 @@ import org.bukkit.Bukkit
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
+import org.bukkit.command.TabCompleter
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
@@ -40,6 +41,10 @@ class PlayTimeLimit : JavaPlugin(), CommandExecutor, Listener {
     val playtime: MutableMap<UUID, Long> = ConcurrentHashMap()
     var coords: MutableMap<UUID, Coords> = ConcurrentHashMap()
     private lateinit var pluginConfig: Config
+
+    companion object {
+        private val ARG_OPTIONS = listOf("all", "today")
+    }
 
     private var connection: Connection? = null
 
@@ -103,7 +108,6 @@ class PlayTimeLimit : JavaPlugin(), CommandExecutor, Listener {
         )
     }
 
-
     override fun onEnable() {
         initializeDatabase()
         if (connection == null || connection?.isClosed == true) {
@@ -113,6 +117,22 @@ class PlayTimeLimit : JavaPlugin(), CommandExecutor, Listener {
         Bukkit.getPluginManager().registerEvents(this, this)
 
         getCommand("get-time")?.setExecutor(GetTime(this))
+        getCommand("get-time")?.tabCompleter = object : TabCompleter {
+            override fun onTabComplete(
+                sender: CommandSender,
+                command: Command,
+                alias: String,
+                args: Array<out String>
+            ): List<String>? {
+
+                if (args.size == 1) {
+                    val partialArgument = args[0].lowercase()
+                    return ARG_OPTIONS.filter { it.startsWith(partialArgument) }
+                }
+
+                return emptyList()
+            }
+        }
         getCommand("leaderboard")?.setExecutor(Leaderboard(this))
 
         this.saveDefaultConfig()
@@ -283,22 +303,45 @@ class PlayTimeLimit : JavaPlugin(), CommandExecutor, Listener {
         ): Boolean {
             val player = sender as? Player
             if (player != null) {
+                if (args.isEmpty()) {
+                    sender.sendMessage("Usage: /get-time [today|all]")
+                    return true
+                }
+
                 val time = plugin.playtime[player.uniqueId] ?: 0L
                 val sessionTime = time / 1200L
 
-                val timezoneId = ZoneId.of(plugin.pluginConfig.timezone)
-                val startOfDay = ZonedDateTime.now(timezoneId)
-                    .toLocalDate()
-                    .atStartOfDay(timezoneId)
-                    .toEpochSecond()
+                // if they use /get-time all - default to anything past epoch second 0
+                var lookupTimePast: Long = 0
 
                 var previousTimePlayed: Long = 0
+
+                val subAction = args[0]?.lowercase()
+
+                when (subAction) {
+                    "today" -> {
+                        val timezoneId = ZoneId.of(plugin.pluginConfig.timezone)
+                        lookupTimePast = ZonedDateTime.now(timezoneId)
+                            .toLocalDate()
+                            .atStartOfDay(timezoneId)
+                            .toEpochSecond()
+                    }
+
+                    "all" -> {
+                        // already assigned
+                    }
+
+                    else -> {
+                        sender.sendMessage("Usage: /get-time [today|all]")
+                        return true
+                    }
+                }
 
                 try {
                     plugin.connection?.prepareStatement(
                         "SELECT SUM(length) as total_length FROM playtime WHERE time >= ? AND uuid = ?"
                     )?.use { preparedStatement ->
-                        preparedStatement.setLong(1, startOfDay)
+                        preparedStatement.setLong(1, lookupTimePast)
                         preparedStatement.setString(2, player.uniqueId.toString())
 
                         val resultSet = preparedStatement.executeQuery()
@@ -311,14 +354,30 @@ class PlayTimeLimit : JavaPlugin(), CommandExecutor, Listener {
 
                 val totalTime = previousTimePlayed + sessionTime
 
-                sender.sendMessage(
-                    "You've played for $totalTime ${plugin.pluralize("minute", totalTime)} today, and $sessionTime ${
-                        plugin.pluralize(
-                            "minute",
-                            sessionTime
-                        )
-                    } during this session."
-                )
+                if (lookupTimePast.toInt() == 0) {
+                    sender.sendMessage(
+                        "You've played for $totalTime ${
+                            plugin.pluralize(
+                                "minute",
+                                totalTime
+                            )
+                        } since the start of this server."
+                    )
+                } else {
+                    sender.sendMessage(
+                        "You've played for $totalTime ${
+                            plugin.pluralize(
+                                "minute",
+                                totalTime
+                            )
+                        } today, and $sessionTime ${
+                            plugin.pluralize(
+                                "minute",
+                                sessionTime
+                            )
+                        } during this session."
+                    )
+                }
             } else {
                 sender.sendMessage("This command can only be run by a player.")
             }
