@@ -1,5 +1,6 @@
 package org.radi8.playTimeLimit
 
+import nl.mirrajabi.humanize.duration.DurationHumanizer
 import org.bukkit.Bukkit
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
@@ -41,6 +42,8 @@ class PlayTimeLimit : JavaPlugin(), CommandExecutor, Listener {
     val playtime: MutableMap<UUID, Long> = ConcurrentHashMap()
     var coords: MutableMap<UUID, Coords> = ConcurrentHashMap()
     private lateinit var pluginConfig: Config
+    val humanizer = DurationHumanizer()
+    val humanizerOptions  = DurationHumanizer.Options(conjunction = " and ")
 
     companion object {
         private val ARG_OPTIONS = listOf("all", "today")
@@ -196,16 +199,6 @@ class PlayTimeLimit : JavaPlugin(), CommandExecutor, Listener {
         logger.info("${description.name} version ${description.version} enabled!")
     }
 
-    fun pluralize(text: String, num: Long): String {
-        var returnText = text
-
-        if (num.toInt() == 0 || num > 1) {
-            returnText += "s"
-        }
-
-        return returnText
-    }
-
     private fun getPlaytimePastSessionsToday(uuid: UUID): Long {
         val timezoneId = ZoneId.of(pluginConfig.timezone)
         val startOfDay = ZonedDateTime.now(timezoneId)
@@ -283,7 +276,8 @@ class PlayTimeLimit : JavaPlugin(), CommandExecutor, Listener {
                 val username = Bukkit.getOfflinePlayer(uuid).name ?: "Unknown ($uuidString)"
 
                 if (totalMinutes > 0) {
-                    messageBuilder.append("#${i + 1}: $username - $totalMinutes ${pluralize("minute", totalMinutes)}\n")
+                    val humanizedTime = humanizer.humanize(totalMinutes * 60 * 1000)
+                    messageBuilder.append("#${i + 1}: $username - $humanizedTime\n")
                 }
             }
 
@@ -353,29 +347,17 @@ class PlayTimeLimit : JavaPlugin(), CommandExecutor, Listener {
                 }
 
                 val totalTime = previousTimePlayed + sessionTime
+                val humanizedTotalTime = plugin.humanizer.humanize(totalTime * 60 * 1000)
+                val humanizedSessionTime = plugin.humanizer.humanize(sessionTime * 60 * 1000)
+
 
                 if (lookupTimePast.toInt() == 0) {
                     sender.sendMessage(
-                        "You've played for $totalTime ${
-                            plugin.pluralize(
-                                "minute",
-                                totalTime
-                            )
-                        } since the start of this server."
+                        "You've played for $humanizedTotalTime since the start of this server."
                     )
                 } else {
                     sender.sendMessage(
-                        "You've played for $totalTime ${
-                            plugin.pluralize(
-                                "minute",
-                                totalTime
-                            )
-                        } today, and $sessionTime ${
-                            plugin.pluralize(
-                                "minute",
-                                sessionTime
-                            )
-                        } during this session."
+                        "You've played for $humanizedTotalTime today, and $humanizedSessionTime during this session."
                     )
                 }
             } else {

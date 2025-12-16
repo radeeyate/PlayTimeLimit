@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "org.radi8"
-version = "1.2-SNAPSHOT"
+version = "1.2"
 
 repositories {
     mavenCentral()
@@ -15,11 +15,13 @@ repositories {
     maven("https://oss.sonatype.org/content/groups/public/") {
         name = "sonatype"
     }
+    maven ( "https://jitpack.io" )
 }
 
 dependencies {
     compileOnly("org.spigotmc:spigot-api:1.20.6-R0.1-SNAPSHOT")
     implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
+    api("com.github.mirrajabi:duration-humanizer:1.0.1")
 }
 
 tasks {
